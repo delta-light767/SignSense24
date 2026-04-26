@@ -1,0 +1,1526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SignSense Pro v7</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#080c14;--panel:#0d1520;--card:#111c2d;--border:#1e3050;--primary:#00d4ff;--success:#00ffaa;--warn:#ffb800;--danger:#ff4757;--text:#e2eaf5;--muted:#4a6080}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Syne',sans-serif;background:var(--bg);color:var(--text);display:flex;height:100vh;overflow:hidden}
+.main-panel{flex:3;display:flex;flex-direction:column;padding:18px;gap:14px;min-width:0}
+.viewport{position:relative;background:#000;border-radius:18px;overflow:hidden;flex:1;border:1px solid var(--border);box-shadow:0 0 40px rgba(0,212,255,0.07)}
+video,#output_canvas{position:absolute;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+#flash{position:absolute;inset:0;background:rgba(0,212,255,0.18);pointer-events:none;opacity:0;transition:opacity 0.05s;border-radius:18px}
+#hand-dot{position:absolute;top:14px;left:14px;width:10px;height:10px;border-radius:50%;background:var(--danger);box-shadow:0 0 8px var(--danger);transition:all 0.3s}
+#hand-dot.one{background:var(--success);box-shadow:0 0 8px var(--success)}
+#hand-dot.dual{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+#hand-label{position:absolute;top:10px;left:32px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);padding:2px 8px;background:rgba(8,12,20,0.8);border-radius:8px;pointer-events:none}
+#frame-overlay{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.85);color:var(--primary);font-family:'JetBrains Mono',monospace;font-size:13px;padding:6px 14px;border-radius:20px;border:1px solid var(--border);display:none;white-space:nowrap}
+#hud-res{position:absolute;top:14px;right:14px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);background:rgba(8,12,20,0.75);padding:3px 8px;border-radius:6px;border:1px solid var(--border)}
+#dual-hud{position:absolute;bottom:50px;left:50%;transform:translateX(-50%);background:rgba(255,184,0,0.12);border:1px solid var(--warn);color:var(--warn);font-family:'JetBrains Mono',monospace;font-size:11px;padding:4px 14px;border-radius:12px;display:none;white-space:nowrap}
+/* orientation indicator overlay */
+#orient-hud{position:absolute;top:50px;right:14px;background:rgba(8,12,20,0.82);border:1px solid var(--border);border-radius:10px;padding:6px 10px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);display:none;min-width:90px}
+#orient-hud .oh-title{color:var(--primary);font-size:9px;margin-bottom:3px;letter-spacing:1px}
+#orient-val{color:var(--warn);font-size:13px;font-weight:700}
+.status-bar{background:var(--card);border:1px solid var(--border);padding:14px 20px;border-radius:14px;display:flex;justify-content:space-between;align-items:center;gap:14px}
+#pred-block{min-width:0;flex:1}
+#prediction{font-size:28px;font-weight:800;color:var(--primary);letter-spacing:-0.5px;transition:color 0.15s;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#prediction.active{color:var(--success)}
+#prediction.dual-notloaded{color:var(--muted);font-size:18px}
+#prediction.orient-change{color:#ff9800}
+#sub-line{font-size:12px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:3px;min-height:15px}
+#conf-bar-wrap{flex:1;max-width:180px}
+#conf-label{font-size:11px;color:var(--muted);margin-bottom:3px;font-family:'JetBrains Mono',monospace}
+.conf-track{height:6px;background:var(--border);border-radius:3px;overflow:hidden}
+#conf-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--primary),var(--success));border-radius:3px;transition:width 0.1s}
+#mode-badge{font-family:'JetBrains Mono',monospace;font-size:11px;padding:5px 12px;border-radius:20px;border:1px solid var(--border);background:var(--panel);color:var(--muted);white-space:nowrap}
+#mode-badge.capturing{color:var(--warn);border-color:var(--warn)}
+#mode-badge.ready{color:var(--success);border-color:var(--success)}
+.sidebar{width:310px;min-width:290px;background:var(--panel);border-left:1px solid var(--border);padding:16px 14px;display:flex;flex-direction:column;gap:14px;overflow-y:auto}
+.sidebar h2{font-size:15px;font-weight:800;color:var(--primary);letter-spacing:1px;text-transform:uppercase;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.badge-v{font-size:9px;background:rgba(0,212,255,0.1);color:var(--primary);border:1px solid var(--primary);padding:2px 6px;border-radius:6px;font-weight:700}
+.section-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:5px}
+input[type="text"]{width:100%;padding:9px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;font-size:13px;outline:none;transition:border-color 0.2s}
+input[type="text"]:focus{border-color:var(--primary)}
+.row-flex{display:flex;gap:7px;align-items:center;margin-top:6px}
+.row-flex label{font-size:11px;color:var(--muted);white-space:nowrap}
+input[type="range"]{flex:1;accent-color:var(--primary)}
+.mono-val{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--primary);min-width:28px}
+button{width:100%;padding:9px;border-radius:8px;border:none;font-family:'Syne',sans-serif;font-weight:700;font-size:13px;cursor:pointer;transition:opacity 0.15s,transform 0.1s}
+button:active{transform:scale(0.98)}
+button:disabled{opacity:0.4;cursor:not-allowed}
+.btn-capture{background:var(--primary);color:var(--bg)}
+.btn-train{background:var(--success);color:var(--bg)}
+.btn-clear{background:transparent;color:var(--danger);border:1px solid var(--danger);font-size:11px;padding:5px;width:auto}
+.prog-track{height:5px;background:var(--border);border-radius:3px;overflow:hidden;margin-top:6px}
+#cap-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--primary),var(--warn));border-radius:3px;transition:width 0.06s}
+#train-info{font-size:11px;color:var(--muted);text-align:center;font-family:'JetBrains Mono',monospace;min-height:14px}
+hr{border:none;border-top:1px solid var(--border)}
+.dataset-header{display:flex;justify-content:space-between;align-items:center}
+.gesture-item{background:var(--card);padding:8px 10px;border-radius:8px;margin-bottom:6px;border:1px solid var(--border)}
+.gesture-name{font-weight:700;font-size:13px}
+.gesture-meta{font-family:'JetBrains Mono',monospace;color:var(--muted);font-size:10px;margin-top:2px}
+.gesture-btns{display:flex;gap:4px;margin-top:6px}
+.btn-sm{width:auto;padding:3px 8px;font-size:10px;border-radius:5px;cursor:pointer}
+.btn-view{background:transparent;color:var(--primary);border:1px solid var(--primary)}
+.btn-3d{background:transparent;color:var(--warn);border:1px solid var(--warn)}
+.btn-del{background:transparent;color:var(--danger);border:1px solid var(--danger)}
+#epochs-row{display:flex;gap:7px;align-items:center}
+#epochs-row label{font-size:11px;color:var(--muted);white-space:nowrap}
+#train-prog-wrap{display:none}
+.train-track{height:4px;background:var(--border);border-radius:2px;overflow:hidden;margin-top:5px}
+#train-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--success),var(--primary));border-radius:2px;transition:width 0.2s}
+.toggle-row{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted)}
+.toggle{position:relative;width:34px;height:19px}
+.toggle input{display:none}
+.slider-tog{position:absolute;inset:0;background:var(--border);border-radius:10px;cursor:pointer;transition:background 0.2s}
+.slider-tog::before{content:'';position:absolute;width:13px;height:13px;background:white;border-radius:50%;top:3px;left:3px;transition:transform 0.2s}
+.toggle input:checked+.slider-tog{background:var(--primary)}
+.toggle input:checked+.slider-tog::before{transform:translateX(15px)}
+::-webkit-scrollbar{width:3px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+/* Resizable 3D canvas */
+.c3d-resize-wrap{position:relative;display:inline-block;width:100%}
+.c3d-resize-handle{position:absolute;bottom:4px;right:4px;width:14px;height:14px;cursor:nwse-resize;opacity:0.5;z-index:10}
+.c3d-resize-handle::before,.c3d-resize-handle::after{content:'';position:absolute;background:var(--primary);border-radius:1px}
+.c3d-resize-handle::before{width:10px;height:2px;bottom:6px;right:0}
+.c3d-resize-handle::after{width:2px;height:10px;bottom:0;right:6px}
+/* ── ALL-FINGERS DIRECTION PANEL ── */
+#dir-panel{position:absolute;bottom:14px;right:14px;display:none;flex-direction:row;gap:7px;pointer-events:none}
+.dir-hand-block{background:rgba(8,12,20,0.92);border:1px solid var(--border);border-radius:11px;padding:7px 9px;min-width:112px;backdrop-filter:blur(4px)}
+.dir-hand-title{font-family:'JetBrains Mono',monospace;font-size:8px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:5px;font-weight:700}
+.dir-hand-title.right-title{color:var(--primary)}
+.dir-hand-title.left-title{color:var(--success)}
+.dir-finger-row{display:flex;align-items:center;gap:5px;margin-bottom:3px}
+.dir-finger-row:last-child{margin-bottom:0}
+.dir-finger-name{font-family:'JetBrains Mono',monospace;font-size:8px;color:var(--muted);width:38px;flex-shrink:0}
+.dir-finger-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;transition:background 0.15s}
+.dir-arrow{font-size:13px;line-height:1;min-width:16px;text-align:center;transition:all 0.1s}
+.dir-arrow.ext{filter:drop-shadow(0 0 3px currentColor)}
+.dir-arrow.curl{opacity:0.28;font-size:10px}
+/* MODALS */
+.modal-overlay{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(8,12,20,0.9);backdrop-filter:blur(8px);animation:fadeIn 0.18s ease}
+.modal-box{background:linear-gradient(135deg,#0d1520,#111c2d);border:1px solid rgba(0,212,255,0.2);border-radius:20px;padding:24px;box-shadow:0 0 80px rgba(0,212,255,0.1);animation:popIn 0.25s cubic-bezier(0.34,1.56,0.64,1);max-height:92vh;overflow-y:auto;position:relative}
+.modal-title{font-size:18px;font-weight:800;color:var(--primary);margin-bottom:3px}
+.modal-sub{font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-bottom:14px}
+.modal-close{position:absolute;top:14px;right:16px;background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;width:auto;padding:0;line-height:1}
+/* 3D */
+.canvas3d-wrap{position:relative;width:100%}
+canvas.c3d{width:100%;border-radius:10px;background:#060a10;border:1px solid var(--border);display:block;cursor:grab}
+canvas.c3d:active{cursor:grabbing}
+.c3d-label{position:absolute;top:6px;left:8px;font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--primary);background:rgba(6,10,16,0.8);padding:2px 6px;border-radius:4px;pointer-events:none}
+/* finger labels legend */
+.finger-legend{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.fl-item{font-size:10px;font-family:'JetBrains Mono',monospace;padding:2px 7px;border-radius:10px;border:1px solid}
+/* star */
+.star-row{display:flex;gap:6px;justify-content:center;margin:10px 0}
+.star{font-size:26px;cursor:pointer;transition:transform 0.15s,filter 0.15s;filter:grayscale(1) opacity(0.4)}
+.star.lit{filter:none}
+.star:hover{transform:scale(1.2)}
+/* img grid */
+.img-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.img-thumb{border-radius:8px;overflow:hidden;border:1px solid var(--border);cursor:pointer;transition:border-color 0.2s}
+.img-thumb:hover{border-color:var(--primary)}
+.img-thumb img{width:100%;display:block}
+/* orient bar */
+.orient-bar-wrap{margin-top:8px;background:#060a10;border-radius:8px;padding:8px 10px;border:1px solid var(--border)}
+.orient-bar-title{font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-bottom:5px}
+.orient-arc{width:100%;height:18px;position:relative;background:linear-gradient(90deg,#ff4757,#ffb800,#00ffaa,#ffb800,#ff4757);border-radius:4px;overflow:hidden}
+.orient-needle{position:absolute;top:0;width:2px;height:100%;background:white;border-radius:1px;transition:left 0.15s;transform:translateX(-1px)}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes popIn{from{opacity:0;transform:scale(0.85)}to{opacity:1;transform:scale(1)}}
+@keyframes glow{0%,100%{box-shadow:0 0 8px var(--warn)}50%{box-shadow:0 0 20px var(--warn)}}
+</style>
+</head>
+<body>
+<div class="main-panel">
+  <div class="viewport">
+    <video id="input_video" playsinline></video>
+    <canvas id="output_canvas"></canvas>
+    <div id="hand-dot"></div>
+    <div id="hand-label">No hand</div>
+    <div id="hud-res">—</div>
+    <div id="flash"></div>
+    <div id="dual-hud">🤲 Dual-hand detected — model not loaded</div>
+    <div id="frame-overlay">Capturing: 0 / 150</div>
+    <div id="orient-hud">
+      <div class="oh-title">ORIENTATION</div>
+      <div id="orient-val">0°</div>
+    </div>
+    <div id="dir-panel">
+      <!-- populated dynamically for each detected hand -->
+    </div>
+  </div>
+  <div class="status-bar">
+    <div id="pred-block">
+      <div id="prediction">Initializing…</div>
+      <div id="sub-line"></div>
+    </div>
+    <div id="conf-bar-wrap">
+      <div id="conf-label">Confidence: —</div>
+      <div class="conf-track"><div id="conf-fill"></div></div>
+    </div>
+    <div id="mode-badge">Warming up…</div>
+  </div>
+</div>
+
+<div class="sidebar">
+  <h2>SignSense Pro <span class="badge-v">v7</span></h2>
+
+  <div>
+    <div class="section-label">Capture Gesture</div>
+    <input type="text" id="label-input" placeholder="e.g. Hello, Peace, Stop">
+    <div class="row-flex">
+      <label>Frames</label>
+      <input type="range" id="frames-slider" min="60" max="300" value="150" step="10">
+      <span class="mono-val" id="frames-val">150</span>
+    </div>
+    <button class="btn-capture" id="cap-btn" style="margin-top:9px">▶ Start Capturing</button>
+    <div class="prog-track"><div id="cap-fill"></div></div>
+  </div>
+
+  <div>
+    <div class="section-label">Train Model</div>
+    <div id="epochs-row">
+      <label>Epochs</label>
+      <input type="range" id="epochs-slider" min="15" max="100" value="40" step="5">
+      <span class="mono-val" id="epochs-val">40</span>
+    </div>
+    <button class="btn-train" id="train-btn" style="margin-top:9px" disabled>⚡ Train Neural Network</button>
+    <div id="train-prog-wrap" class="train-track"><div id="train-fill"></div></div>
+    <div id="train-info">Capture ≥ 2 gestures to train.</div>
+  </div>
+
+  <div>
+    <div class="section-label">Settings</div>
+    <div class="toggle-row">
+      <span>🔊 Text-to-Speech</span>
+      <label class="toggle"><input type="checkbox" id="tts-toggle" checked><span class="slider-tog"></span></label>
+    </div>
+    <div class="toggle-row" style="margin-top:7px">
+      <span>🤝 Both-hands invariant</span>
+      <label class="toggle"><input type="checkbox" id="mirror-toggle" checked><span class="slider-tog"></span></label>
+    </div>
+    <div class="toggle-row" style="margin-top:7px">
+      <span>📡 Far-distance boost</span>
+      <label class="toggle"><input type="checkbox" id="fardist-toggle" checked><span class="slider-tog"></span></label>
+    </div>
+    <div class="toggle-row" style="margin-top:7px">
+      <span>🔄 Orientation tracking</span>
+      <label class="toggle"><input type="checkbox" id="orient-toggle" checked><span class="slider-tog"></span></label>
+    </div>
+  </div>
+
+  <hr>
+  <div>
+    <div class="dataset-header">
+      <div class="section-label" style="margin:0">My Dataset</div>
+      <button class="btn-clear" id="clear-all-btn">Clear All</button>
+    </div>
+    <div id="dataset-list" style="margin-top:9px"></div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+//  CONFIG
+// ════════════════════════════════════════════════════════════
+const SEQ_LEN       = 16;    // shorter = faster inference
+const CONF_THRESH   = 0.78;
+const SMOOTH_WIN    = 5;
+const ORIENT_THRESH = 75;    // degrees change triggers orientation label swap
+const FEAT_DIM      = 78;    // 63 bone-dir + 15 finger-pointing (5 fingers × 3D)
+let   TARGET        = 150;
+
+// ════════════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════════════
+let dataset      = JSON.parse(localStorage.getItem('ss_v6')) || {};
+let meta         = JSON.parse(localStorage.getItem('ss_meta_v6')) || {};
+let model        = null;
+let labels       = [];
+let modelLoaded  = false;
+
+// Per-hand state [idx 0=first,1=second]
+let seqs         = [[], []];
+let hists        = [[], []];
+let locks        = [false, false];
+let lastOrient   = [null, null]; // degrees for each hand
+
+let isCapturing  = false;
+let isTraining   = false;
+let currentLabel = '';
+let captureCount = 0;
+let lastDisplay  = '';
+let captureSnaps = [];
+let capture3Ds   = [null, null]; // left+right 3D data if dual
+
+// DOM shortcuts
+const $ = id => document.getElementById(id);
+const video     = $('input_video');
+const canvas    = $('output_canvas');
+const ctx       = canvas.getContext('2d');
+const predEl    = $('prediction');
+const subEl     = $('sub-line');
+const modeEl    = $('mode-badge');
+const capFill   = $('cap-fill');
+const frameOv   = $('frame-overlay');
+const handDot   = $('hand-dot');
+const handLabel = $('hand-label');
+const confFill  = $('conf-fill');
+const confLabel = $('conf-label');
+const flashEl   = $('flash');
+const trainInfo = $('train-info');
+const trainFill = $('train-fill');
+const trainPW   = $('train-prog-wrap');
+const dualHud   = $('dual-hud');
+const hudRes    = $('hud-res');
+const orientHud = $('orient-hud');
+const orientVal = $('orient-val');
+const dirPanel  = $('dir-panel');
+
+// ════════════════════════════════════════════════════════════
+//  SKELETON TOPOLOGY
+// ════════════════════════════════════════════════════════════
+const BONE_PAIRS = [
+  [0,1],[1,2],[2,3],[3,4],         // thumb
+  [0,5],[5,6],[6,7],[7,8],         // index
+  [0,9],[9,10],[10,11],[11,12],    // middle
+  [0,13],[13,14],[14,15],[15,16],  // ring
+  [0,17],[17,18],[18,19],[19,20],  // pinky
+  [5,9],[9,13],[13,17]             // palm cross
+];
+const FINGER_TIPS  = [4,8,12,16,20];
+const FINGER_PIPS  = [3,7,11,15,19];
+const FINGER_MCPS  = [2,5,9,13,17];
+const FINGER_NAMES = ['Thumb','Index','Middle','Ring','Pinky'];
+const FINGER_COLS  = ['#00d4ff','#00ffaa','#ffb800','#ff6b6b','#b06bff'];
+// Bone groups by finger for coloring
+const BONE_FG = [
+  [0,1,2,3],          // thumb bones
+  [4,5,6,7],          // index
+  [8,9,10,11],        // middle
+  [12,13,14,15],      // ring
+  [16,17,18,19],      // pinky
+  [20,21,22]          // palm
+];
+
+// ════════════════════════════════════════════════════════════
+//  MATH
+// ════════════════════════════════════════════════════════════
+const v3sub  = (a,b) => [a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+const v3add  = (a,b) => [a[0]+b[0],a[1]+b[1],a[2]+b[2]];
+const v3scale= (v,s) => [v[0]*s,v[1]*s,v[2]*s];
+const v3dot  = (a,b) => a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const v3cross= (a,b) => [a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+const v3len  = v => Math.sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]);
+const v3norm = v => { const l=v3len(v)||1e-9; return[v[0]/l,v[1]/l,v[2]/l]; };
+
+// ════════════════════════════════════════════════════════════
+//  FEATURE EXTRACTION — 78D
+//  63D bone-direction (invariant to position/scale/rotation)
+//  + 15D finger-pointing unit vectors (5 fingers × 3D local)
+//  Hand-agnostic: mirror flag normalises left/right hands
+// ════════════════════════════════════════════════════════════
+const FEAT_BONES = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [0,9],[9,10],[10,11],[11,12],
+  [0,13],[13,14],[14,15],[15,16],
+  [0,17],[17,18],[18,19],[19,20]
+];
+
+// Finger tip → previous joint pairs for pointing direction
+const POINT_PAIRS = [
+  [3,4],   // thumb: IP → TIP
+  [7,8],   // index: DIP → TIP
+  [11,12], // middle: DIP → TIP
+  [15,16], // ring:   DIP → TIP
+  [19,20]  // pinky:  DIP → TIP
+];
+
+function lmToArr(lm){ return lm.map(p=>[p.x,p.y,p.z]); }
+
+function extractFeatures(lm, mirror) {
+  const pts = lmToArr(lm);
+  const w   = pts[0];
+  const dx  = v3sub(pts[9],w);
+  const scale = v3len(dx)||1;
+  // local frame: X=wrist→index-MCP, Z=palm normal
+  const xA = v3norm(v3sub(pts[5],w));
+  const pv  = v3norm(v3sub(pts[17],w));
+  const zA  = v3norm(v3cross(xA, pv));
+  const yA  = v3norm(v3cross(zA, xA));
+  const mx  = mirror ? -1 : 1;
+
+  // project into frame
+  const local = pts.map(p=>{
+    const d = v3sub(p,w);
+    return [
+      mx*(v3dot(d,xA)/scale),
+      v3dot(d,yA)/scale,
+      v3dot(d,zA)/scale
+    ];
+  });
+
+  const vec = new Float32Array(FEAT_DIM);
+
+  // 63D: bone directions
+  FEAT_BONES.forEach(([a,b],i)=>{
+    const bv = v3norm(v3sub(local[b],local[a]));
+    vec[i*3]=bv[0]; vec[i*3+1]=bv[1]; vec[i*3+2]=bv[2];
+  });
+  vec[60]=zA[0]; vec[61]=zA[1]; vec[62]=zA[2];
+
+  // 15D: finger pointing unit vectors in local frame
+  POINT_PAIRS.forEach(([a,b],fi)=>{
+    const pv = v3norm(v3sub(local[b],local[a]));
+    vec[63+fi*3]   = mx*pv[0];
+    vec[63+fi*3+1] = pv[1];
+    vec[63+fi*3+2] = pv[2];
+  });
+
+  return vec;
+}
+
+function augment(vec){
+  const out=new Float32Array(FEAT_DIM);
+  for(let i=0;i<FEAT_DIM;i++) out[i]=vec[i]+(Math.random()-0.5)*0.016;
+  return out;
+}
+
+// ════════════════════════════════════════════════════════════
+//  HAND ORIENTATION ANGLE (yaw of palm normal in XZ plane)
+//  Returns degrees 0–360
+// ════════════════════════════════════════════════════════════
+function handOrientation(lm) {
+  const pts = lmToArr(lm);
+  const xA  = v3norm(v3sub(pts[5],pts[0]));
+  const pv  = v3norm(v3sub(pts[17],pts[0]));
+  const zA  = v3norm(v3cross(xA,pv));
+  // angle in XZ plane (yaw)
+  const deg = Math.atan2(zA[0], zA[2]) * 180 / Math.PI;
+  return (deg + 360) % 360;
+}
+
+// ════════════════════════════════════════════════════════════
+//  FINGER ANALYSIS — extended fingers, spread, curl
+// ════════════════════════════════════════════════════════════
+function analyzeFingers(lm) {
+  const pts = lmToArr(lm);
+  const dist = (a,b) => v3len(v3sub(a,b));
+  const w    = pts[0];
+
+  const ext = FINGER_TIPS.map((tip,i)=>{
+    const mcp = pts[FINGER_MCPS[i]];
+    const pip = pts[FINGER_PIPS[i]];
+    const tipD = dist(pts[tip],w);
+    const mcpD = dist(mcp,w);
+    // for thumb use different ratio
+    return i===0 ? tipD > mcpD*1.1 : tipD > mcpD*1.2;
+  });
+
+  const extNonThumb = ext.slice(1).filter(Boolean).length;
+  const extTips = FINGER_TIPS.slice(1)
+    .filter((_,i)=>ext[i+1])
+    .map(t=>pts[t]);
+
+  let spread = false;
+  if(extTips.length>=2){
+    let maxSep=0;
+    for(let i=0;i<extTips.length;i++)
+      for(let j=i+1;j<extTips.length;j++)
+        maxSep=Math.max(maxSep,dist(extTips[i],extTips[j]));
+    spread = maxSep > 0.10;
+  }
+
+  // curl: average PIP-to-tip / PIP-to-wrist ratio
+  const curlScores = FINGER_TIPS.map((tip,i)=>{
+    const pip = pts[FINGER_PIPS[i]];
+    return dist(pts[tip],pip) / (dist(pip,w)||0.01);
+  });
+
+  return { ext, extNonThumb, spread, curlScores };
+}
+
+// ════════════════════════════════════════════════════════════
+//  ALL-FINGER DIRECTION ANALYSIS
+//  Returns array of 5 entries (thumb→pinky), each:
+//    { name, color, extended, dir, symbol, vec }
+//
+//  Direction is computed in RAW SCREEN SPACE so it matches
+//  what the user actually sees in the camera view:
+//    screen X: left←  right→   (mirrored because camera is flipped)
+//    screen Y: up↑    down↓    (MediaPipe Y increases downward, so dy<0 = up)
+//    screen Z: toward camera = Forward, away = Back
+//
+//  The mirror flag flips X so left/right are correct for
+//  whichever physical hand is shown.
+// ════════════════════════════════════════════════════════════
+const DIR_SYMBOLS = {
+  'Up':'↑','Down':'↓','Right':'→','Left':'←','Forward':'●','Back':'○'
+};
+
+function getAllFingerDirections(lm, mirror) {
+  const pts = lmToArr(lm);   // [[x,y,z], …]  — raw MediaPipe normalised coords
+  const { ext } = analyzeFingers(lm);
+
+  return POINT_PAIRS.map(([a, b], fi) => {
+    // Raw screen-space direction vector from previous joint to tip
+    const ax = pts[b][0] - pts[a][0];   // +x = rightward in MP (but display is mirrored)
+    const ay = pts[b][1] - pts[a][1];   // +y = downward  in MP
+    const az = pts[b][2] - pts[a][2];   // +z = toward camera in MP
+
+    // Because video is rendered scaleX(-1), the displayed X is flipped.
+    // mirror=true for left hand (already handled by display flip) — we always flip sx.
+    const sx = -ax;   // flip to match visual display (camera mirror)
+    const sy =  ay;
+    const sz =  az;
+
+    const absx = Math.abs(sx), absy = Math.abs(sy), absz = Math.abs(sz);
+
+    let dirName;
+    if (absy >= absx && absy >= absz)       dirName = sy < 0 ? 'Up'      : 'Down';
+    else if (absx >= absy && absx >= absz)  dirName = sx > 0 ? 'Right'   : 'Left';
+    else                                    dirName = sz < 0 ? 'Back'    : 'Forward';
+
+    return {
+      name    : FINGER_NAMES[fi],
+      color   : FINGER_COLS[fi],
+      extended: ext[fi],
+      dir     : dirName,
+      symbol  : DIR_SYMBOLS[dirName],
+      vec     : [sx, sy, sz]
+    };
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+//  RENDER THE DUAL-HAND ALL-FINGERS DIRECTION PANEL
+//  handDataArr = [{label:'Right'|'Left', lm, mirror}, ...]
+// ════════════════════════════════════════════════════════════
+function renderDirPanel(handDataArr) {
+  if (!handDataArr.length) { dirPanel.style.display = 'none'; return; }
+  dirPanel.style.display = 'flex';
+  dirPanel.innerHTML = '';
+
+  handDataArr.forEach(({ label, lm, mirror }) => {
+    const dirs = getAllFingerDirections(lm, false);  // screen-space: mirror baked into -ax flip
+    const isRight = label === 'Right';
+    const titleClass = isRight ? 'right-title' : 'left-title';
+    const handIcon = isRight ? '🫱' : '🫲';
+
+    const block = document.createElement('div');
+    block.className = 'dir-hand-block';
+    block.innerHTML = `<div class="dir-hand-title ${titleClass}">${handIcon} ${label} Hand</div>` +
+      dirs.map(d => {
+        const colStyle = `color:${d.color}`;
+        const dotBg = d.extended ? d.color : 'var(--border)';
+        const arrowClass = d.extended ? 'ext' : 'curl';
+        return `<div class="dir-finger-row">
+          <div class="dir-finger-dot" style="background:${dotBg}"></div>
+          <span class="dir-finger-name" style="${d.extended ? colStyle : ''}">${d.name}</span>
+          <span class="dir-arrow ${arrowClass}" style="${colStyle}">${d.symbol}</span>
+        </div>`;
+      }).join('');
+    dirPanel.appendChild(block);
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+//  SMART UNKNOWN DESCRIPTION  (all-finger direction-aware)
+// ════════════════════════════════════════════════════════════
+function describeUnknown(lm, mirror) {
+  if(!lm||lm.length<21) return 'unknown gesture';
+  const {ext,extNonThumb,spread} = analyzeFingers(lm);
+  const [thumbExt,...fingersExt] = ext;
+  const extCount = ext.filter(Boolean).length;
+  const idx=fingersExt[0], mid=fingersExt[1], ring=fingersExt[2], pink=fingersExt[3];
+
+  let shape;
+  if(extCount>=4 && spread)              shape='open hand';
+  else if(extCount>=4 && !spread)        shape='flat hand';
+  else if(extCount===0)                  shape='fist';
+  else if(thumbExt&&extNonThumb===0)     shape='thumbs up';
+  else if(idx&&mid&&!ring&&!pink&&spread)  shape='peace / V';
+  else if(idx&&mid&&!ring&&!pink&&!spread) shape='two-finger';
+  else if(idx&&!mid&&!ring&&!pink)         shape='pointing';
+  else if(idx&&mid&&ring&&!pink)           shape='3-finger';
+  else if(idx&&mid&&ring&&pink)            shape='4-finger';
+  else if(!idx&&mid&&ring&&pink)           shape='ok-like';
+  else if(thumbExt&&pink&&!idx&&!mid&&!ring) shape='shaka';
+  else shape=`${extCount}-finger`;
+
+  // mirror param kept for API compat but direction is screen-space now
+  const dirs = getAllFingerDirections(lm, false);
+  const extDirs = dirs
+    .filter(d => d.extended)
+    .map(d => `${d.name[0]}${d.symbol}`)
+    .join(' ');
+
+  return extDirs ? `${shape} [${extDirs}]` : shape;
+}
+
+// ════════════════════════════════════════════════════════════
+//  MEDIAPIPE SETUP — dual hand, far-distance tunable
+// ════════════════════════════════════════════════════════════
+const hands = new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+
+function setHandsOpts(far) {
+  hands.setOptions({
+    maxNumHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: far ? 0.42 : 0.60,
+    minTrackingConfidence:  far ? 0.38 : 0.50,
+  });
+}
+setHandsOpts(true);
+$('fardist-toggle').onchange = function(){ setHandsOpts(this.checked); };
+hands.onResults(onResults);
+
+// ════════════════════════════════════════════════════════════
+//  MAIN RESULTS HANDLER
+// ════════════════════════════════════════════════════════════
+async function onResults(results) {
+  canvas.width  = video.videoWidth  || 1280;
+  canvas.height = video.videoHeight || 480;
+  ctx.save();
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  const nHands = results.multiHandLandmarks?.length || 0;
+
+  // Status dot
+  handDot.className = nHands===0?'':nHands===1?'one':'dual';
+
+  if(nHands===0){
+    handLabel.innerText='No hand';
+    if(!isCapturing){
+      predEl.innerText='·  ·  ·'; predEl.className='';
+      subEl.innerText=''; confFill.style.width='0%'; confLabel.innerText='No hand detected';
+      dualHud.style.display='none'; orientHud.style.display='none';
+      renderDirPanel([]);
+    } else {
+      // During capture: warn user that no hand is visible — counter won't advance
+      frameOv.innerText=`⚠ Show your hand! ${captureCount} / ${TARGET}`;
+    }
+    seqs=[[],[]]; hists=[[],[]]; lastOrient=[null,null];
+    ctx.restore(); return;
+  }
+
+  const mirrorOn = $('mirror-toggle').checked;
+  const orientOn = $('orient-toggle').checked;
+
+  // Draw all hands
+  for(let h=0;h<nHands;h++){
+    const lm   = results.multiHandLandmarks[h];
+    const mpL  = results.multiHandedness?.[h]?.label||'Right';
+    const real = mpL==='Right'?'Left':'Right'; // MP flips because selfie mirror
+    const col  = real==='Right'?'#00d4ff':'#00ffaa';
+    drawConnectors(ctx,lm,HAND_CONNECTIONS,{color:col,lineWidth:3});
+    drawLandmarks(ctx,lm,{color:'#fff',lineWidth:1,radius:3,fillColor:col+'55'});
+    // wrist label on canvas
+    const wx=(1-lm[0].x)*canvas.width, wy=lm[0].y*canvas.height+22;
+    ctx.font='bold 12px JetBrains Mono'; ctx.fillStyle=col; ctx.textAlign='center';
+    ctx.fillText(real,wx,wy);
+  }
+
+  handLabel.innerText = nHands===2 ? 'Both hands' :
+    (results.multiHandedness?.[0]?.label==='Right'?'Left hand':'Right hand');
+
+  // ── CAPTURE MODE ─────────────────────────────────────────────
+  if(isCapturing){
+    const lm   = results.multiHandLandmarks[0];
+    const mpL  = results.multiHandedness?.[0]?.label||'Right';
+    const real = mpL==='Right'?'Left':'Right';
+    const mirror = mirrorOn && real==='Left';
+    const vec  = extractFeatures(lm,mirror);
+    doCapture(vec, lm, nHands, results);
+    ctx.restore(); return;
+  }
+
+  // ── RECOGNITION MODE ─────────────────────────────────────────
+  // Orientation tracking for first hand
+  if(orientOn && nHands>=1){
+    const angle = handOrientation(results.multiHandLandmarks[0]);
+    orientHud.style.display='block';
+    orientVal.innerText = Math.round(angle)+'°';
+
+    if(lastOrient[0]!==null){
+      let delta = Math.abs(angle - lastOrient[0]);
+      if(delta>180) delta=360-delta;
+      if(delta >= ORIENT_THRESH){
+        // orientation changed significantly — show orientation change info
+        handleOrientChange(angle, lastOrient[0]);
+      }
+    }
+    lastOrient[0]=angle;
+  } else {
+    orientHud.style.display='none';
+  }
+
+  // Run per-hand inference
+  const handPreds = [];
+  const dirHandData = [];
+  for(let h=0;h<Math.min(nHands,2);h++){
+    const lm   = results.multiHandLandmarks[h];
+    const mpL  = results.multiHandedness?.[h]?.label||'Right';
+    const real = mpL==='Right'?'Left':'Right';
+    const mirror = mirrorOn && real==='Left';
+    const vec  = extractFeatures(lm,mirror);
+    const res  = await runInference(vec,h);
+    handPreds.push({...res, hand:real, lm, mirror});
+    dirHandData.push({label:real, lm, mirror});
+  }
+
+  // Render all-finger direction panel for every detected hand
+  renderDirPanel(dirHandData);
+
+  reconcile(handPreds, nHands);
+  ctx.restore();
+}
+
+// ════════════════════════════════════════════════════════════
+//  ORIENTATION CHANGE HANDLER
+// ════════════════════════════════════════════════════════════
+let orientChangeTimer = null;
+function handleOrientChange(newAngle, oldAngle) {
+  // Classify orientation zones
+  const zone = a => {
+    const n = ((a%360)+360)%360;
+    if(n<45||n>=315)  return 'facing forward';
+    if(n<135)         return 'rotated right (90°)';
+    if(n<225)         return 'flipped (180°)';
+    return                   'rotated left (270°)';
+  };
+  const oldZone = zone(oldAngle);
+  const newZone = zone(newAngle);
+  if(oldZone===newZone) return;
+
+  // Flash orientation change in sub-line
+  clearTimeout(orientChangeTimer);
+  predEl.classList.add('orient-change');
+  subEl.innerText = `↻ ${newZone}`;
+  orientChangeTimer = setTimeout(()=>{
+    predEl.classList.remove('orient-change');
+    subEl.innerText='';
+  }, 1800);
+}
+
+// ════════════════════════════════════════════════════════════
+//  PER-HAND INFERENCE
+// ════════════════════════════════════════════════════════════
+async function runInference(vec, hIdx) {
+  if(!seqs[hIdx]) seqs[hIdx]=[];
+  seqs[hIdx].push(Array.from(vec));
+  if(seqs[hIdx].length>SEQ_LEN) seqs[hIdx].shift();
+  if(seqs[hIdx].length<SEQ_LEN || !model || isTraining || locks[hIdx])
+    return {label:null, conf:0};
+
+  locks[hIdx]=true;
+  let scores;
+  try{
+    scores=tf.tidy(()=>
+      model.predict(tf.tensor3d([seqs[hIdx]],[1,SEQ_LEN,FEAT_DIM]),{batchSize:1})
+    ).dataSync();
+  } catch(e){ locks[hIdx]=false; return {label:null,conf:0}; }
+  locks[hIdx]=false;
+
+  let maxIdx=0, maxConf=scores[0];
+  for(let i=1;i<scores.length;i++) if(scores[i]>maxConf){maxConf=scores[i];maxIdx=i;}
+
+  if(!hists[hIdx]) hists[hIdx]=[];
+  hists[hIdx].push(maxConf>CONF_THRESH ? maxIdx : -1);
+  if(hists[hIdx].length>SMOOTH_WIN) hists[hIdx].shift();
+
+  const vote={};
+  hists[hIdx].forEach(i=>vote[i]=(vote[i]||0)+1);
+  const [wStr,wCnt]=Object.entries(vote).sort((a,b)=>b[1]-a[1])[0];
+  const wIdx=parseInt(wStr);
+  const needed=Math.ceil(SMOOTH_WIN*0.55);
+
+  if(wIdx>=0 && wCnt>=needed)
+    return {label:labels[wIdx], conf:maxConf, vote:wCnt};
+  return {label:null, conf:maxConf, vote:wCnt||0};
+}
+
+// ════════════════════════════════════════════════════════════
+//  MULTI-HAND RECONCILIATION
+//  Rules:
+//  - 0 hands: dots
+//  - 1 hand, model loaded: show sign or unknown description
+//  - 2 hands, model NOT loaded: "Dual hands — model not loaded"
+//  - 2 hands, model loaded, same sign: show sign (no dual prefix)
+//    with sub-line noting both hands
+//  - 2 hands, model loaded, different: highest confidence wins
+//  - Unknown either case: smart description
+// ════════════════════════════════════════════════════════════
+function reconcile(preds, nHands) {
+  const avgConf = preds.length
+    ? preds.reduce((s,p)=>s+p.conf,0)/preds.length : 0;
+  const validPreds = preds.filter(p=>p.label);
+
+  // ── DUAL NOT LOADED ───────────────────────────────────────
+  if(nHands===2 && !modelLoaded){
+    dualHud.style.display='block';
+    dualHud.innerText='🤲 Dual hands detected — model not loaded';
+    predEl.innerText='Not loaded'; predEl.className='dual-notloaded';
+    subEl.innerText='Train a model to recognize signs';
+    confFill.style.width='0%'; confLabel.innerText='Model not trained';
+    return;
+  }
+  dualHud.style.display='none';
+
+  // ── NO CONFIDENT PREDICTION ───────────────────────────────
+  if(validPreds.length===0){
+    // 3-stage unknown pipeline:
+    // 1. Check if we have 3D data for any gesture that might match
+    // 2. Finger analysis
+    // 3. Show description
+    const lm0 = preds[0]?.lm;
+
+    // Stage 1: 3D-based nearest (geometric distance to stored 3D poses)
+    const geo3D = lm0 ? find3DMatch(lm0) : null;
+
+    // Stage 2: finger description (pass mirror from first pred if available)
+    const mirror0 = preds[0]?.mirror || false;
+    const desc = lm0 ? describeUnknown(lm0, mirror0) : 'unknown gesture';
+
+    // Stage 3: compose display
+    const unknownText = geo3D
+      ? `Unknown (near: ${geo3D})`
+      : `Unknown: ${desc}`;
+
+    if(unknownText!==lastDisplay){
+      lastDisplay=unknownText;
+      predEl.innerText='Unknown'; predEl.className='unknown';
+      // Show breakdown: geo match OR finger desc
+      subEl.innerText = geo3D
+        ? `3D near: ${geo3D} · ${desc}`
+        : desc;
+      setConf(avgConf*40);
+    }
+    return;
+  }
+
+  // ── VALID PREDICTIONS ─────────────────────────────────────
+  let finalLabel, finalConf, sub='';
+
+  if(nHands===2 && validPreds.length>=2){
+    if(validPreds[0].label===validPreds[1].label){
+      // Same sign both hands — just show the sign name, no prefix
+      finalLabel=validPreds[0].label;
+      finalConf =Math.max(validPreds[0].conf,validPreds[1].conf);
+      sub=`${validPreds[0].hand} + ${validPreds[1].hand}`;
+    } else {
+      // Disagree — highest confidence
+      const best=validPreds.sort((a,b)=>b.conf-a.conf)[0];
+      finalLabel=best.label; finalConf=best.conf;
+      sub=`${best.hand} hand`;
+    }
+  } else {
+    finalLabel=validPreds[0].label;
+    finalConf =validPreds[0].conf;
+    sub = nHands===1 ? `${preds[0].hand} hand` : '';
+  }
+
+  setConf(finalConf*100);
+  if(finalLabel!==lastDisplay){
+    lastDisplay=finalLabel;
+    predEl.innerText=finalLabel; predEl.className='active';
+    subEl.innerText=sub;
+    ttsSpeak(finalLabel);
+  } else {
+    subEl.innerText=sub;
+  }
+}
+
+function setConf(pct){
+  confFill.style.width=`${Math.min(pct,100).toFixed(1)}%`;
+  confLabel.innerText=`Confidence: ${Math.min(pct,100).toFixed(1)}%`;
+}
+
+// ════════════════════════════════════════════════════════════
+//  3D GEOMETRIC NEAREST-MATCH
+//  Compares current landmarks against stored model3d poses
+//  Returns label name if distance < threshold, else null
+// ════════════════════════════════════════════════════════════
+function find3DMatch(lm) {
+  if(!lm||!Object.keys(meta).length) return null;
+  const pts = lmToArr(lm);
+  // Normalize current lm
+  const w=pts[0], refD=v3len(v3sub(pts[9],w))||1;
+  const normCur = pts.map(p=>v3scale(v3sub(p,w),1/refD));
+
+  let bestLabel=null, bestDist=Infinity;
+  const GEO_THRESH = 0.28; // tuned threshold
+
+  for(const [label,m] of Object.entries(meta)){
+    if(!m.model3d||m.model3d.length<21) continue;
+    const stored = m.model3d;
+    const sw = stored[0];
+    const sRef = v3len(v3sub(stored[9],sw))||1;
+    const normSt = stored.map(p=>v3scale(v3sub([p.x,p.y,p.z],[sw.x,sw.y,sw.z]),1/sRef));
+    // Average landmark distance
+    let d=0;
+    for(let i=0;i<21;i++) d+=v3len(v3sub(normCur[i],normSt[i]));
+    d/=21;
+    if(d<bestDist){bestDist=d;bestLabel=label;}
+  }
+  return bestDist<GEO_THRESH ? bestLabel : null;
+}
+
+// ════════════════════════════════════════════════════════════
+//  CAPTURE
+// ════════════════════════════════════════════════════════════
+function doCapture(vec, lm, nHands, results) {
+  if(!dataset[currentLabel]) dataset[currentLabel]=[];
+  dataset[currentLabel].push(Array.from(vec));
+  if(captureCount%2===0) dataset[currentLabel].push(Array.from(augment(vec)));
+
+  const pct=captureCount/TARGET;
+
+  // Snapshots at 20%, 50%, 80%
+  if([0.2,0.5,0.8].some(t=>Math.abs(pct-t)<0.015)){
+    const s=document.createElement('canvas');
+    s.width=160;s.height=120;
+    const sc=s.getContext('2d');
+    sc.save();sc.translate(160,0);sc.scale(-1,1);
+    sc.drawImage(video,0,0,160,120);sc.restore();
+    captureSnaps.push(s.toDataURL('image/jpeg',0.7));
+  }
+  // 3D + direction data at 40% and 60% (store both hands if dual)
+  if(Math.abs(pct-0.4)<0.015){
+    capture3Ds[0]=lm.map(l=>({x:l.x,y:l.y,z:l.z}));
+    if(nHands>=2) capture3Ds[1]=results.multiHandLandmarks[1].map(l=>({x:l.x,y:l.y,z:l.z}));
+    // Store per-finger direction snapshot (screen-space, matches what user sees)
+    capture3Ds.dirs_r = getAllFingerDirections(lm, false).map(d=>({name:d.name,symbol:d.symbol,dir:d.dir,ext:d.extended}));
+    if(nHands>=2){
+      capture3Ds.dirs_l = getAllFingerDirections(results.multiHandLandmarks[1], false).map(d=>({name:d.name,symbol:d.symbol,dir:d.dir,ext:d.extended}));
+    }
+  }
+
+  captureCount++;
+  capFill.style.width=`${Math.min(pct+1/TARGET,1)*100}%`;
+  frameOv.innerText=`Capturing: ${captureCount} / ${TARGET}`;
+  if(captureCount%8===0){flashEl.style.opacity='1';setTimeout(()=>flashEl.style.opacity='0',70);}
+
+  if(captureCount>=TARGET){
+    isCapturing=false; captureCount=0;
+    frameOv.style.display='none';
+    modeEl.innerText='Recognition Mode'; modeEl.className='ready';
+    predEl.innerText='Captured ✓'; predEl.className=''; subEl.innerText='';
+    capFill.style.width='0%';
+    if(!meta[currentLabel]) meta[currentLabel]={snapshots:[],model3d:null,model3d_l:null,dirs_r:null,dirs_l:null,rating:0};
+    if(captureSnaps.length)        meta[currentLabel].snapshots=captureSnaps;
+    if(capture3Ds[0])              meta[currentLabel].model3d=capture3Ds[0];
+    if(capture3Ds[1])              meta[currentLabel].model3d_l=capture3Ds[1];
+    if(capture3Ds.dirs_r)          meta[currentLabel].dirs_r=capture3Ds.dirs_r;
+    if(capture3Ds.dirs_l)          meta[currentLabel].dirs_l=capture3Ds.dirs_l;
+    captureSnaps=[]; capture3Ds=[null,null];
+    saveMeta(); save(); updateTrainBtn();
+    setTimeout(()=>showRatingPopup(currentLabel),350);
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  TRAINING — faster: smaller model, fewer layers, fast batch
+// ════════════════════════════════════════════════════════════
+async function trainModel() {
+  if(isTraining) return;
+  const keys=Object.keys(dataset);
+  if(keys.length<2) return alert('Capture at least 2 different gestures first.');
+
+  isTraining=true; modelLoaded=false;
+  $('train-btn').disabled=true;
+  trainPW.style.display='block'; trainFill.style.width='0%';
+  trainInfo.innerText='Building sequences…';
+  await tf.nextFrame();
+
+  labels=keys;
+  const EPOCHS=parseInt($('epochs-slider').value);
+  const X=[],Y=[];
+  keys.forEach((name,ci)=>{
+    const frames=dataset[name];
+    for(let i=0;i<=frames.length-SEQ_LEN;i++){
+      X.push(frames.slice(i,i+SEQ_LEN)); Y.push(ci);
+    }
+  });
+
+  if(X.length<keys.length*3){
+    trainInfo.innerText=`❌ Too few sequences (${X.length}). Capture more.`;
+    isTraining=false; $('train-btn').disabled=false; return;
+  }
+  // Shuffle
+  for(let i=X.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [X[i],X[j]]=[X[j],X[i]]; [Y[i],Y[j]]=[Y[j],Y[i]];
+  }
+
+  let xs,ys;
+  try{
+    xs=tf.tensor3d(X,[X.length,SEQ_LEN,FEAT_DIM]);
+    ys=tf.oneHot(tf.tensor1d(Y,'int32'),keys.length).toFloat();
+  }catch(e){
+    trainInfo.innerText=`❌ Tensor: ${e.message}`;
+    isTraining=false; $('train-btn').disabled=false; return;
+  }
+
+  if(model){try{model.dispose()}catch(_){}model=null;}
+
+  // Enhanced model using 78D features (incl. pointing directions)
+  const m=tf.sequential();
+  m.add(tf.layers.conv1d({filters:96,kernelSize:3,activation:'relu',
+    inputShape:[SEQ_LEN,FEAT_DIM],kernelInitializer:'glorotUniform',padding:'same'}));
+  m.add(tf.layers.batchNormalization());
+  m.add(tf.layers.conv1d({filters:128,kernelSize:3,activation:'relu',
+    kernelInitializer:'glorotUniform',padding:'same'}));
+  m.add(tf.layers.globalAveragePooling1d());
+  m.add(tf.layers.dropout({rate:0.3}));
+  m.add(tf.layers.dense({units:64,activation:'relu',kernelInitializer:'glorotUniform'}));
+  m.add(tf.layers.dense({units:keys.length,activation:'softmax'}));
+  m.compile({optimizer:tf.train.adam(0.0015),loss:'categoricalCrossentropy',metrics:['accuracy']});
+
+  trainInfo.innerText='Compiling GPU kernels…';
+  await tf.nextFrame();
+  tf.tidy(()=>m.predict(tf.zeros([1,SEQ_LEN,FEAT_DIM])));
+  await tf.nextFrame();
+
+  const bs=Math.min(128,Math.max(16,Math.floor(X.length/3)));
+  const useVal=X.length>=60;
+  let finalAcc=0;
+
+  try{
+    await m.fit(xs,ys,{
+      epochs:EPOCHS, batchSize:bs,
+      validationSplit:useVal?0.12:0, shuffle:true,
+      callbacks:{onEpochEnd:async(ep,logs)=>{
+        const pct=((ep+1)/EPOCHS*100).toFixed(0);
+        const acc=logs.accuracy??logs.acc??0;
+        const va=logs.val_accuracy??logs.val_acc;
+        finalAcc=acc;
+        trainFill.style.width=`${pct}%`;
+        let msg=`Epoch ${ep+1}/${EPOCHS} — ${(acc*100).toFixed(1)}%`;
+        if(va!=null) msg+=` | val ${(va*100).toFixed(1)}%`;
+        trainInfo.innerText=msg;
+        await tf.nextFrame();
+      }}
+    });
+    model=m; modelLoaded=true;
+    seqs=[[],[]]; hists=[[],[]]; lastDisplay=''; lastOrient=[null,null];
+    trainInfo.innerText=`✓ ${keys.length} gestures — ${(finalAcc*100).toFixed(0)}% acc`;
+    modeEl.innerText='Recognition Mode'; modeEl.className='ready';
+    showTrainPopup(keys,finalAcc);
+  }catch(e){
+    trainInfo.innerText=`❌ ${e.message}`;
+    try{m.dispose()}catch(_){}
+  }finally{
+    xs.dispose(); ys.dispose();
+    isTraining=false; $('train-btn').disabled=false;
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  3D VIEWER — dual-hand, full finger labels, orientation bar
+// ════════════════════════════════════════════════════════════
+window.view3D = label => {
+  const m=meta[label]||{};
+  const pts_r=m.model3d||[];   // right hand data (or first hand)
+  const pts_l=m.model3d_l||[]; // second hand if captured dual
+  const hasDual=pts_r.length&&pts_l.length;
+  const ov=document.createElement('div');
+  ov.className='modal-overlay';
+  ov.onclick=e=>{if(e.target===ov){cancelAnimationFrame(ov._raf);ov.remove();}};
+
+  const legendHTML=FINGER_NAMES.map((n,i)=>
+    `<span class="fl-item" style="color:${FINGER_COLS[i]};border-color:${FINGER_COLS[i]}">${n}</span>`
+  ).join('');
+
+  // ── DIRECTION SUMMARY STRIP — must be built BEFORE ov.innerHTML ──
+  const buildDirStrip = (dirsArr, handLabel) => {
+    if(!dirsArr||!dirsArr.length) return '';
+    const isR = handLabel==='Right';
+    const col = isR ? 'var(--primary)' : 'var(--success)';
+    const icon = isR ? '🫱' : '🫲';
+    const rows = dirsArr.map(d=>`
+      <div style="display:flex;align-items:center;gap:5px;margin-bottom:2px">
+        <span style="width:6px;height:6px;border-radius:50%;background:${d.ext?FINGER_COLS[FINGER_NAMES.indexOf(d.name)]:'var(--border)'};display:inline-block;flex-shrink:0"></span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${d.ext?FINGER_COLS[FINGER_NAMES.indexOf(d.name)]:'var(--muted)'};width:42px">${d.name}</span>
+        <span style="font-size:13px;line-height:1;color:${d.ext?FINGER_COLS[FINGER_NAMES.indexOf(d.name)]:'var(--border)'}${d.ext?'':'88'}">${d.symbol}</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:8px;color:var(--muted)">${d.dir}</span>
+      </div>`).join('');
+    return `<div style="flex:1;background:rgba(6,10,16,0.8);border:1px solid var(--border);border-radius:8px;padding:8px 10px">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:8px;color:${col};letter-spacing:1px;margin-bottom:5px;text-transform:uppercase">${icon} ${handLabel} — Finger Dirs</div>
+      ${rows}
+    </div>`;
+  };
+
+  const dirStripHTML = `
+    <div style="display:flex;gap:8px;margin-top:8px">
+      ${buildDirStrip(m.dirs_r||[], hasDual?'Right':'Captured')}
+      ${hasDual ? buildDirStrip(m.dirs_l||[], 'Left') : ''}
+    </div>`;
+
+  ov.innerHTML=`
+  <div class="modal-box" style="width:${hasDual?640:460}px;max-width:98vw">
+    <button class="modal-close" onclick="cancelAnimationFrame(this.closest('.modal-overlay')._raf);this.closest('.modal-overlay').remove()">✕</button>
+    <div class="modal-title">${label} — 3D Model</div>
+    <div class="modal-sub">Drag to rotate · Auto-rotates · Resize via corner handle</div>
+    <div style="display:flex;gap:10px">
+      <div style="flex:1">
+        ${pts_r.length?`
+          <div class="canvas3d-wrap c3d-resize-wrap" id="wrap3d_r">
+            <canvas class="c3d" id="c3d_r" width="400" height="300"></canvas>
+            <div class="c3d-label">${hasDual?'Right / First hand':'Captured hand'}</div>
+            <div class="c3d-resize-handle" id="rsz_r"></div>
+          </div>`
+        :'<div style="color:var(--muted);font-size:12px;padding:20px;text-align:center">No 3D data</div>'}
+      </div>
+      ${hasDual?`<div style="flex:1">
+        <div class="canvas3d-wrap c3d-resize-wrap" id="wrap3d_l">
+          <canvas class="c3d" id="c3d_l" width="400" height="300"></canvas>
+          <div class="c3d-label">Left / Second hand</div>
+          <div class="c3d-resize-handle" id="rsz_l"></div>
+        </div>
+      </div>`:''}
+    </div>
+    <div class="finger-legend">${legendHTML}
+      <span class="fl-item" style="color:var(--muted);border-color:var(--border)">Palm</span>
+    </div>
+    ${dirStripHTML}
+    <div class="orient-bar-wrap" id="orient-bar-block">
+      <div class="orient-bar-title">ORIENTATION (drag to see rotation)</div>
+      <div class="orient-arc"><div class="orient-needle" id="orient-needle" style="left:50%"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:3px">
+        <span>180°</span><span>270°</span><span>0°</span><span>90°</span><span>180°</span>
+      </div>
+    </div>
+    <button onclick="this.closest('.modal-overlay').remove();setTimeout(()=>viewImages('${label}'),80)"
+      style="margin-top:10px;width:100%;background:rgba(0,212,255,0.08);color:var(--primary);border:1px solid var(--primary);border-radius:8px;padding:8px;font-family:'Syne',sans-serif;font-weight:700;font-size:12px;cursor:pointer">
+      ← View Snapshots
+    </button>
+  </div>`;
+  function attachResize(handleId, canvasId, wrapId) {
+    const handle = $(handleId), cvs = $(canvasId);
+    if(!handle||!cvs) return;
+    let rDrag=false, rStartX=0, rStartY=0, rStartW=0, rStartH=0;
+    const startResize = (cx,cy) => {
+      rDrag=true; rStartX=cx; rStartY=cy;
+      rStartW=cvs.width; rStartH=cvs.height;
+    };
+    const doResize = (cx,cy) => {
+      if(!rDrag) return;
+      cvs.width=Math.max(180,rStartW+(cx-rStartX));
+      cvs.height=Math.max(140,rStartH+(cy-rStartY));
+      cvs.style.width=cvs.width+'px'; cvs.style.height=cvs.height+'px';
+    };
+    handle.addEventListener('mousedown', e=>{startResize(e.clientX,e.clientY);e.preventDefault();e.stopPropagation();});
+    document.addEventListener('mousemove', e=>{doResize(e.clientX,e.clientY);});
+    document.addEventListener('mouseup', ()=>{rDrag=false;});
+    handle.addEventListener('touchstart', e=>{startResize(e.touches[0].clientX,e.touches[0].clientY);e.preventDefault();},{passive:false});
+    document.addEventListener('touchmove', e=>{if(rDrag)doResize(e.touches[0].clientX,e.touches[0].clientY);});
+    document.addEventListener('touchend', ()=>{rDrag=false;});
+  }
+  // ── CRITICAL: append to DOM before accessing canvas elements ──
+  document.body.appendChild(ov);
+
+  if(pts_r.length) attachResize('rsz_r','c3d_r','wrap3d_r');
+  if(hasDual&&pts_l.length) attachResize('rsz_l','c3d_l','wrap3d_l');
+  if(pts_r.length){
+    const {loop:lR, getAngle:gR}=init3D($('c3d_r'),pts_r,'Right');
+    let lastRaf=lR();
+    // sync orientation needle with rotation
+    let rafId;
+    (function tick(){
+      const needle=$('orient-needle');
+      if(needle){
+        const a=((gR()%(Math.PI*2))+Math.PI*2)%(Math.PI*2);
+        needle.style.left=`${(a/(Math.PI*2))*100}%`;
+      }
+      rafId=requestAnimationFrame(tick);
+    })();
+    ov._raf=rafId;
+  }
+  if(hasDual&&pts_l.length){
+    init3D($('c3d_l'),pts_l,'Left');
+  }
+};
+
+function init3D(c, ptsRaw, side) {
+  const cx=c.getContext('2d');
+
+  // Normalize
+  let mX=Infinity,MX=-Infinity,mY=Infinity,MY=-Infinity,mZ=Infinity,MZ=-Infinity;
+  ptsRaw.forEach(p=>{mX=Math.min(mX,p.x);MX=Math.max(MX,p.x);mY=Math.min(mY,p.y);MY=Math.max(MY,p.y);mZ=Math.min(mZ,p.z);MZ=Math.max(MZ,p.z);});
+  const cx0=(mX+MX)/2, cy0=(mY+MY)/2, cz0=(mZ+MZ)/2;
+  const span=Math.max(MX-mX,MY-mY,0.001);
+  const norm=ptsRaw.map(p=>({x:(p.x-cx0)/span,y:(p.y-cy0)/span,z:(p.z-cz0)/span}));
+
+  // Compute finger pointing directions from stored pose (screen-space)
+  const fakeLm = ptsRaw.map(p=>({x:p.x,y:p.y,z:p.z}));
+  const storedFingerDirs = getAllFingerDirections(fakeLm, false);
+
+  let rotY=side==='Left'?-0.3:0.3, rotX=-0.35;
+  let drag=false, lmx=0, lmy=0;
+
+  const mouseDown=e=>{drag=true;lmx=e.clientX;lmy=e.clientY;};
+  const mouseMove=e=>{if(!drag)return;rotY+=(e.clientX-lmx)*0.012;rotX+=(e.clientY-lmy)*0.012;lmx=e.clientX;lmy=e.clientY;};
+  const mouseUp=()=>drag=false;
+  c.addEventListener('mousedown',mouseDown);
+  c.addEventListener('mousemove',mouseMove);
+  c.addEventListener('mouseup',mouseUp);
+  c.addEventListener('mouseleave',mouseUp);
+  c.addEventListener('touchstart',e=>{drag=true;lmx=e.touches[0].clientX;lmy=e.touches[0].clientY;e.preventDefault();},{passive:false});
+  c.addEventListener('touchmove',e=>{if(!drag)return;rotY+=(e.touches[0].clientX-lmx)*0.012;rotX+=(e.touches[0].clientY-lmy)*0.012;lmx=e.touches[0].clientX;lmy=e.touches[0].clientY;e.preventDefault();},{passive:false});
+  c.addEventListener('touchend',()=>drag=false);
+
+  function project(p){
+    const W=c.width, H=c.height;
+    const cy=Math.cos(rotY),sy=Math.sin(rotY),cX=Math.cos(rotX),sX=Math.sin(rotX);
+    let x=p.x*cy-p.z*sy, z=p.x*sy+p.z*cy;
+    let y=p.y*cX-z*sX;   z=p.y*sX+z*cX;
+    const fov=2.2, sc=W*0.52, pz=z+fov;
+    return {sx:W/2+x/pz*sc, sy:H/2+y/pz*sc, depth:z};
+  }
+
+  function boneColor(boneIdx){
+    for(let g=0;g<BONE_FG.length;g++)
+      if(BONE_FG[g].includes(boneIdx)) return FINGER_COLS[g]||'#4a6080';
+    return '#4a6080';
+  }
+
+  function draw(){
+    const W=c.width, H=c.height;
+    if(!drag) rotY+=0.006;
+    cx.fillStyle='#060a10'; cx.fillRect(0,0,W,H);
+
+    // Grid floor
+    cx.strokeStyle='rgba(30,48,80,0.35)'; cx.lineWidth=0.5;
+    for(let g=-5;g<=5;g++){
+      const a=project({x:g*0.12,y:0.55,z:-0.7}),b=project({x:g*0.12,y:0.55,z:0.7});
+      const c2=project({x:-0.7,y:0.55,z:g*0.12}),d=project({x:0.7,y:0.55,z:g*0.12});
+      cx.beginPath();cx.moveTo(a.sx,a.sy);cx.lineTo(b.sx,b.sy);cx.stroke();
+      cx.beginPath();cx.moveTo(c2.sx,c2.sy);cx.lineTo(d.sx,d.sy);cx.stroke();
+    }
+
+    const proj=norm.map(p=>project(p));
+
+    // Bones sorted by depth
+    const boneList=BONE_PAIRS.map(([a,b],i)=>({a,b,i,depth:(proj[a].depth+proj[b].depth)/2}));
+    boneList.sort((x,y)=>x.depth-y.depth);
+    boneList.forEach(({a,b,i})=>{
+      const col=boneColor(i);
+      const pa=proj[a],pb=proj[b];
+      const thick=Math.max(1.2,3.5-pa.depth*1.8);
+      const gr=cx.createLinearGradient(pa.sx,pa.sy,pb.sx,pb.sy);
+      gr.addColorStop(0,col+'dd'); gr.addColorStop(1,col+'66');
+      cx.beginPath(); cx.moveTo(pa.sx,pa.sy); cx.lineTo(pb.sx,pb.sy);
+      cx.strokeStyle=gr; cx.lineWidth=thick; cx.lineCap='round'; cx.stroke();
+    });
+
+    // Nodes sorted by depth
+    proj.map((p,i)=>({...p,i})).sort((a,b)=>a.depth-b.depth).forEach(({sx,sy,depth,i})=>{
+      let col='#ffffff';
+      for(let g=0;g<BONE_FG.length;g++)
+        if(BONE_FG[g].some(b=>BONE_PAIRS[b]&&(BONE_PAIRS[b][0]===i||BONE_PAIRS[b][1]===i)))
+          {col=FINGER_COLS[g];break;}
+      const r=Math.max(2.5,5-depth*1.5);
+      const grd=cx.createRadialGradient(sx,sy,0,sx,sy,r*2.8);
+      grd.addColorStop(0,col+'aa'); grd.addColorStop(1,'transparent');
+      cx.beginPath();cx.arc(sx,sy,r*2.8,0,Math.PI*2);cx.fillStyle=grd;cx.fill();
+      cx.beginPath();cx.arc(sx,sy,r,0,Math.PI*2);cx.fillStyle=col;cx.fill();
+    });
+
+    // Finger tip labels + direction arrows for ALL 5 fingers
+    FINGER_TIPS.forEach((tipIdx,fi)=>{
+      const p=proj[tipIdx];
+      const col=FINGER_COLS[fi];
+      const p2=proj[FINGER_PIPS[fi]];
+      const ddx=p.sx-p2.sx, ddy=p.sy-p2.sy;
+      const len=Math.sqrt(ddx*ddx+ddy*ddy)||1;
+      const arrowLen = 18;
+      const ex=p.sx+ddx/len*arrowLen, ey=p.sy+ddy/len*arrowLen;
+      // Arrow shaft
+      cx.beginPath();cx.moveTo(p.sx,p.sy);cx.lineTo(ex,ey);
+      cx.strokeStyle=col+'cc'; cx.lineWidth=1.8; cx.setLineDash([2,2]); cx.stroke();
+      cx.setLineDash([]);
+      // Arrowhead
+      const ang=Math.atan2(ddy,ddx);
+      cx.beginPath();
+      cx.moveTo(ex,ey);
+      cx.lineTo(ex-7*Math.cos(ang-0.45),ey-7*Math.sin(ang-0.45));
+      cx.lineTo(ex-7*Math.cos(ang+0.45),ey-7*Math.sin(ang+0.45));
+      cx.closePath(); cx.fillStyle=col+'cc'; cx.fill();
+      // Finger name
+      cx.font=`bold 9px JetBrains Mono`;
+      cx.fillStyle=col; cx.textAlign='center';
+      cx.shadowColor=col; cx.shadowBlur=4;
+      const labelY = ey+(ddy<0?-4:12);
+      cx.fillText(FINGER_NAMES[fi], ex, labelY);
+      // Direction symbol
+      const dirSym = storedFingerDirs[fi]?.symbol || '';
+      cx.font='bold 11px JetBrains Mono';
+      cx.fillStyle=col+'ee'; cx.shadowBlur=3;
+      cx.fillText(dirSym, ex, labelY+(ddy<0?-11:11));
+      cx.shadowBlur=0;
+    });
+
+    // Direction legend strip (all 5 fingers) at top-right of canvas
+    {
+      const lx0 = W-8, ly0 = 10;
+      cx.font='bold 8px JetBrains Mono'; cx.textAlign='right';
+      storedFingerDirs.forEach((fd,fi)=>{
+        const y = ly0 + fi*14;
+        cx.fillStyle = fd.extended ? fd.color : fd.color+'44';
+        const mark = fd.extended ? '■' : '□';
+        cx.fillText(`${mark} ${fd.name.slice(0,3)} ${fd.symbol}`, lx0, y);
+      });
+    }
+
+    // Wrist label
+    const wp=proj[0];
+    cx.font='9px JetBrains Mono'; cx.fillStyle='rgba(0,212,255,0.7)';
+    cx.textAlign='center'; cx.fillText('WRIST',wp.sx,wp.sy+14);
+
+    // Palm normal arrow (shows orientation)
+    const palmC=proj[9];
+    const nx=Math.sin(rotY)*20, ny=-Math.sin(rotX)*20;
+    cx.beginPath();cx.moveTo(palmC.sx,palmC.sy);cx.lineTo(palmC.sx+nx,palmC.sy+ny);
+    cx.strokeStyle='rgba(255,255,255,0.3)'; cx.lineWidth=1.5;
+    cx.setLineDash([3,3]); cx.stroke(); cx.setLineDash([]);
+    // arrowhead
+    cx.beginPath();
+    const ang2=Math.atan2(ny,nx);
+    cx.moveTo(palmC.sx+nx,palmC.sy+ny);
+    cx.lineTo(palmC.sx+nx-6*Math.cos(ang2-0.4),palmC.sy+ny-6*Math.sin(ang2-0.4));
+    cx.lineTo(palmC.sx+nx-6*Math.cos(ang2+0.4),palmC.sy+ny-6*Math.sin(ang2+0.4));
+    cx.closePath(); cx.fillStyle='rgba(255,255,255,0.4)'; cx.fill();
+
+    // Orientation text overlay
+    const angleDeg=Math.round(((rotY%(Math.PI*2))+Math.PI*2)%(Math.PI*2)*180/Math.PI);
+    cx.font='10px JetBrains Mono'; cx.fillStyle='rgba(255,184,0,0.7)';
+    cx.textAlign='left';
+    cx.fillText(`${side} · ${angleDeg}°`, 8, H-8);
+  }
+
+  let _raf;
+  function loop(){draw(); _raf=requestAnimationFrame(loop); return _raf;}
+  return {loop, getAngle:()=>rotY};
+}
+
+// ════════════════════════════════════════════════════════════
+//  IMAGE VIEWER
+// ════════════════════════════════════════════════════════════
+window.viewImages=label=>{
+  const m=meta[label]||{}, snaps=m.snapshots||[];
+  const ov=document.createElement('div');
+  ov.className='modal-overlay';
+  ov.onclick=e=>{if(e.target===ov)ov.remove();};
+  const rat=m.rating?'⭐'.repeat(m.rating):'Unrated';
+  const snapHTML=snaps.length
+    ?snaps.map(s=>`<div class="img-thumb"><img src="${s}" style="border-radius:7px"></div>`).join('')
+    :'<div style="color:var(--muted);font-size:12px;grid-column:1/-1;text-align:center;padding:20px">No snapshots captured</div>';
+  ov.innerHTML=`
+  <div class="modal-box" style="width:400px">
+    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
+    <div class="modal-title">${label}</div>
+    <div class="modal-sub">Snapshot Gallery · Rating: ${rat}</div>
+    <div class="img-grid">${snapHTML}</div>
+    <button onclick="this.closest('.modal-overlay').remove();setTimeout(()=>view3D('${label}'),80)"
+      style="margin-top:12px;width:100%;background:rgba(255,184,0,0.08);color:var(--warn);border:1px solid var(--warn);border-radius:8px;padding:8px;font-family:'Syne',sans-serif;font-weight:700;font-size:12px;cursor:pointer">
+      View 3D Model →
+    </button>
+  </div>`;
+  document.body.appendChild(ov);
+};
+
+// ════════════════════════════════════════════════════════════
+//  RATING POPUP
+// ════════════════════════════════════════════════════════════
+function showRatingPopup(label){
+  const ov=document.createElement('div');
+  ov.className='modal-overlay';
+  ov.innerHTML=`
+  <div class="modal-box" style="width:320px;text-align:center">
+    <div class="modal-title">Rate Your Capture</div>
+    <div class="modal-sub">${label} · ${dataset[label]?.length||0} frames</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">How steady was your pose?</div>
+    <div class="star-row" id="sr">
+      ${[1,2,3,4,5].map(v=>`<span class="star" data-v="${v}">⭐</span>`).join('')}
+    </div>
+    <div id="rdesc" style="font-size:11px;color:var(--muted);min-height:15px;margin-bottom:12px;font-family:'JetBrains Mono',monospace"></div>
+    <div style="display:flex;gap:7px">
+      <button onclick="closeRating(this,0,'${label}')" style="flex:1;background:var(--border);color:var(--muted);border-radius:8px;padding:8px;font-family:'Syne',sans-serif;font-weight:700;font-size:12px;border:none;cursor:pointer">Skip</button>
+      <button id="rsave" onclick="closeRating(this,window._sRating,'${label}')" disabled style="flex:2;background:linear-gradient(135deg,var(--primary),var(--success));color:var(--bg);border-radius:8px;padding:8px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;border:none;cursor:pointer;opacity:0.4">Save Rating</button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  window._sRating=0;
+  const descs=['','Poor','Fair','Good','Great','Perfect 💎'];
+  ov.querySelectorAll('.star').forEach(s=>{
+    s.onclick=()=>{
+      const v=parseInt(s.dataset.v); window._sRating=v;
+      ov.querySelectorAll('.star').forEach((st,i)=>st.classList.toggle('lit',i<v));
+      $('rdesc').innerText=descs[v];
+      const b=$('rsave'); b.disabled=false; b.style.opacity='1';
+    };
+  });
+}
+window.closeRating=(btn,r,label)=>{
+  if(!meta[label])meta[label]={snapshots:[],model3d:null,rating:0};
+  meta[label].rating=r; saveMeta();
+  btn.closest('.modal-overlay').remove();
+};
+
+// ════════════════════════════════════════════════════════════
+//  TRAINING POPUP
+// ════════════════════════════════════════════════════════════
+function showTrainPopup(keys,acc){
+  const ov=document.createElement('div');
+  ov.className='modal-overlay';
+  ov.onclick=e=>{if(e.target===ov)ov.remove();};
+  ov.innerHTML=`
+  <div class="modal-box" style="width:340px;text-align:center">
+    <div style="font-size:44px;margin-bottom:8px">🧠</div>
+    <div class="modal-title" style="font-size:19px">Training Complete!</div>
+    <div class="modal-sub">Conv1D · 78D features · pointing-aware · hand-agnostic</div>
+    <div style="display:flex;gap:10px;justify-content:center;margin-bottom:14px">
+      <div style="background:#0f172a;border:1px solid var(--border);border-radius:10px;padding:10px 14px">
+        <div style="font-size:20px;font-weight:800;color:var(--success)">${(acc*100).toFixed(0)}%</div>
+        <div style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace">Accuracy</div>
+      </div>
+      <div style="background:#0f172a;border:1px solid var(--border);border-radius:10px;padding:10px 14px">
+        <div style="font-size:20px;font-weight:800;color:var(--primary)">${keys.length}</div>
+        <div style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace">Gestures</div>
+      </div>
+    </div>
+    <div style="text-align:left;background:#0f172a;border-radius:10px;padding:10px 12px;border:1px solid var(--border);margin-bottom:12px">
+      ${keys.map(k=>{
+        const r=meta[k]?.rating||0;
+        return `<div style="font-size:12px;color:var(--text);padding:2px 0;display:flex;align-items:center;justify-content:space-between">
+          <span><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--primary);margin-right:6px"></span>${k}</span>
+          <span style="color:var(--warn);font-size:10px">${r?'⭐'.repeat(r):'—'}</span>
+        </div>`;
+      }).join('')}
+    </div>
+    <button onclick="this.closest('.modal-overlay').remove()"
+      style="width:100%;padding:11px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--primary),var(--success));color:var(--bg);font-family:'Syne',sans-serif;font-weight:800;font-size:14px;cursor:pointer">
+      Start Recognising →
+    </button>
+  </div>`;
+  document.body.appendChild(ov);
+}
+
+// ════════════════════════════════════════════════════════════
+//  TTS / PERSIST / UI
+// ════════════════════════════════════════════════════════════
+function ttsSpeak(t){
+  if(!$('tts-toggle').checked)return;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(new SpeechSynthesisUtterance(t));
+}
+function save()    {localStorage.setItem('ss_v6',JSON.stringify(dataset));renderList();}
+function saveMeta(){localStorage.setItem('ss_meta_v6',JSON.stringify(meta));}
+
+function updateTrainBtn(){
+  const n=Object.keys(dataset).length;
+  $('train-btn').disabled=n<2||isTraining;
+  trainInfo.innerText=n<2?`Capture ≥ 2 gestures. (${n}/2)`:`${n} gesture(s) ready — Train!`;
+}
+
+function renderList(){
+  const list=$('dataset-list');
+  list.innerHTML='';
+  const keys=Object.keys(dataset);
+  if(!keys.length){
+    list.innerHTML='<div style="color:var(--muted);font-size:11px;text-align:center;padding:16px 0">No gestures yet.</div>';
+    return;
+  }
+  keys.forEach(name=>{
+    const m=meta[name]||{};
+    const rat=m.rating?'⭐'.repeat(m.rating):'';
+    const has3D=!!(m.model3d&&m.model3d.length);
+    const hasImg=!!(m.snapshots&&m.snapshots.length);
+    const hasDual=!!(m.model3d_l&&m.model3d_l.length);
+    const div=document.createElement('div');
+    div.className='gesture-item';
+    div.innerHTML=`
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div>
+          <div class="gesture-name">${name} <span style="font-size:10px;color:var(--warn)">${rat}</span></div>
+          <div class="gesture-meta">${dataset[name].length} frames${has3D?' · 3D':''}${hasDual?' · dual':''}</div>
+        </div>
+      </div>
+      <div class="gesture-btns">
+        <button class="btn-sm btn-view" onclick="viewImages('${name}')" ${hasImg?'':'style="opacity:0.35"'}>📷 Snaps</button>
+        <button class="btn-sm btn-3d"   onclick="view3D('${name}')"    ${has3D?'':'style="opacity:0.35"'}>🧊 3D${hasDual?' 2x':''}</button>
+        <button class="btn-sm btn-del"  onclick="removeGesture('${name}')">🗑</button>
+      </div>`;
+    list.appendChild(div);
+  });
+  updateTrainBtn();
+}
+
+window.removeGesture=name=>{
+  if(!confirm(`Delete "${name}"?`))return;
+  delete dataset[name];delete meta[name];
+  save();saveMeta();updateTrainBtn();
+};
+
+// ════════════════════════════════════════════════════════════
+//  SLIDERS & BUTTONS
+// ════════════════════════════════════════════════════════════
+$('frames-slider').oninput=function(){TARGET=parseInt(this.value);$('frames-val').innerText=TARGET;};
+$('epochs-slider').oninput=function(){$('epochs-val').innerText=this.value;};
+
+$('cap-btn').onclick=()=>{
+  const val=$('label-input').value.trim();
+  if(!val){alert('Enter a gesture name first.');return;}
+  if(isCapturing||isTraining)return;
+  if(!dataset[val])dataset[val]=[];
+  currentLabel=val; captureCount=0; isCapturing=true;
+  captureSnaps=[]; capture3Ds=[null,null];
+  seqs=[[],[]]; hists=[[],[]]; lastDisplay=''; lastOrient=[null,null];
+  capFill.style.width='0%';
+  frameOv.style.display='block'; frameOv.innerText=`Capturing: 0 / ${TARGET}`;
+  modeEl.innerText='Capturing…'; modeEl.className='capturing';
+  predEl.innerText='Hold gesture steady…'; predEl.className=''; subEl.innerText='';
+};
+
+$('train-btn').onclick=trainModel;
+$('clear-all-btn').onclick=()=>{
+  if(!confirm('Delete ALL gesture data?'))return;
+  dataset={}; meta={}; save(); saveMeta(); model=null; modelLoaded=false;
+  trainInfo.innerText='Capture ≥ 2 gestures to train.';
+  $('train-btn').disabled=true;
+};
+
+// ════════════════════════════════════════════════════════════
+//  CAMERA — 1280×720, fallback 640×480
+// ════════════════════════════════════════════════════════════
+function startCamera(w,h){
+  return new Camera(video,{
+    onFrame:async()=>{await hands.send({image:video});},
+    width:w,height:h
+  }).start();
+}
+
+startCamera(1280,720).then(()=>{
+  predEl.innerText='Ready — show your hand'; modeEl.innerText='Recognition Mode'; modeEl.className='ready';
+  hudRes.innerText='1280×720';
+}).catch(()=>{
+  startCamera(640,480).then(()=>{
+    predEl.innerText='Ready — show your hand'; modeEl.innerText='Recognition Mode'; modeEl.className='ready';
+    hudRes.innerText='640×480';
+  }).catch(()=>{ predEl.innerText='Camera Error'; });
+});
+
+renderList(); updateTrainBtn();
+</script>
+</body>
+</html>
